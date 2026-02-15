@@ -5,51 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>숲속의 작은 용사 3D</title>
     <link rel="stylesheet" href="css/style.css">
-    <style>
-        /* 버전 정보 스타일 */
-        #version {
-            position: absolute;
-            bottom: 10px;
-            right: 10px;
-            color: rgba(255, 255, 255, 0.5);
-            font-family: monospace;
-            font-size: 14px;
-            pointer-events: none;
-            z-index: 200;
-        }
-        /* 디버그 UI 스타일 */
-        #debug-ui {
-            position: absolute;
-            top: 100px;
-            right: 10px;
-            background: rgba(0, 0, 0, 0.7);
-            color: white;
-            padding: 15px;
-            border-radius: 8px;
-            pointer-events: auto;
-            z-index: 200;
-            font-family: sans-serif;
-            font-size: 12px;
-        }
-        #debug-ui h3 { margin: 0 0 10px 0; color: #ffd700; text-align: center; }
-        #debug-ui label { display: block; margin-bottom: 8px; }
-        #debug-ui input { vertical-align: middle; width: 100px; cursor: pointer; }
-    </style>
 </head>
 <body>
     <div id="game-container">
-        <!-- 버전 정보 -->
-        <div id="version">Ver 1.3.0 (Debug UI Added)</div>
-
-        <!-- 디버그 UI (속도 및 점프 조절) -->
-        <div id="debug-ui">
-            <h3>🛠️ 게임 조절</h3>
-            <label>적 속도: <input type="range" id="dbg-enemy-speed" min="0.1" max="5" step="0.1" value="1"></label>
-            <label>점프 높이: <input type="range" id="dbg-jump-height" min="5" max="30" step="1" value="12"></label>
-            <label>공격 속도: <input type="range" id="dbg-attack-speed" min="0.5" max="3" step="0.1" value="1"></label>
-        </div>
-
-        <!-- UI 오버레이 -->
         <div id="ui-overlay">
             <div class="hp-bar-outer"><div id="hp-fill"></div></div>
             <div class="stats-panel">
@@ -57,42 +15,27 @@
                 <div>LV: <span id="lv-val">1</span></div>
                 <div style="font-size: 14px; color: #aaa;">EXP: <span id="xp-val">0</span> / <span id="next-xp-val">5</span></div>
             </div>
-            <div id="timer">Stage 1 - 01:00 | 남은 적: 5</div>
+            <div id="timer">Stage 1 - 05:00</div>
             <div id="charge-bar"><div id="charge-fill"></div></div>
             <div id="fall-alert">⚠️ 위험! 월드 밖입니다! ⚠️</div>
         </div>
 
-        <!-- 시작 화면 -->
         <div id="start-screen" class="overlay">
             <h1 style="font-size: 60px; color: #4CAF50; margin-bottom: 10px;">숲속의 작은 용사 3D</h1>
-            <p style="font-size: 20px; color: #aaa;">- 디버그 & 비주얼 업데이트 -</p>
+            <p style="font-size: 20px; color: #aaa;">- 월드 확장 에디션 -</p>
             <button onclick="initGame()">모험 시작</button>
         </div>
 
-        <!-- 상점 화면 -->
         <div id="shop-ui" class="overlay" style="display: none;">
             <h1 style="color: #ffd700;">마법 상점</h1>
             <div class="shop-items">
-                <div class="shop-item">
-                    <h3>긴 칼</h3>
-                    <p>범위 증가</p>
-                    <button onclick="buyWeapon('longsword', 100)">💰 100</button>
-                </div>
-                <div class="shop-item">
-                    <h3>강철 도끼</h3>
-                    <p>대미지 강화</p>
-                    <button onclick="buyWeapon('axe', 250)">💰 250</button>
-                </div>
-                <div class="shop-item">
-                    <h3>전설의 검</h3>
-                    <p>초강력</p>
-                    <button onclick="buyWeapon('legend', 500)">💰 500</button>
-                </div>
+                <div class="shop-item"><h3>긴 칼</h3><p>범위 증가</p><button onclick="buyWeapon('longsword', 100)">💰 100</button></div>
+                <div class="shop-item"><h3>강철 도끼</h3><p>대미지 강화</p><button onclick="buyWeapon('axe', 250)">💰 250</button></div>
+                <div class="shop-item"><h3>전설의 검</h3><p>초강력</p><button onclick="buyWeapon('legend', 500)">💰 500</button></div>
             </div>
             <button onclick="nextStage()" style="background: #555; margin-top: 40px;">다음 스테이지로</button>
         </div>
 
-        <!-- 게임 오버 화면 -->
         <div id="game-over" class="overlay" style="display: none;">
             <h1 id="fail-title" style="font-size: 60px; color: #ff0040;">GAME OVER</h1>
             <p id="fail-msg">용사가 쓰러졌습니다...</p>
@@ -100,10 +43,8 @@
         </div>
     </div>
 
-    <!-- 외부 라이브러리 로드 -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
+    <!-- 외부 라이브러리 및 게임 스크립트 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <!-- 게임 로직 스크립트 연결 -->
     <script src="js/game.js"></script>
 </body>
 </html>

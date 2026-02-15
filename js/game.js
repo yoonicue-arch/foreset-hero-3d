@@ -24,9 +24,9 @@ function playSound(type) {
 }
 
 // --- 3D Scene Setup ---
-let scene, camera, renderer, clock;
+let scene, camera, renderer, clock, raycaster;
 let playerGroup, swordMesh, shieldMesh;
-let trees = [], enemies = [], items = [], projectiles = [];
+let trees = [], enemies = [], items = [], projectiles = [], groundMeshes = [], groundShapes = [];
 let gameActive = false;
 let stage = 1;
 let stageTime = 120; // 2 minutes
@@ -65,6 +65,7 @@ function initGame() {
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(1024, 768);
     renderer.shadowMap.enabled = true;
+    raycaster = new THREE.Raycaster();
     const container = document.getElementById('game-container');
     const existingCanvas = container.querySelector('canvas');
     if (existingCanvas) existingCanvas.remove();
@@ -159,8 +160,8 @@ function createPlayer() {
 }
 
 function initConsonantWorlds() {
-    const shapes = ['ㄱ', 'ㄴ', 'ㄷ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅅ', 'ㅇ', 'ㅈ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅎ'];
     const tileSize = TILE_SIZE; // 60
+    const englishChars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
     
     // Define all 9 positions (0,0) to (2,2)
     const positions = [];
@@ -181,18 +182,25 @@ function initConsonantWorlds() {
     }
     const consonantPositions = otherPositions.slice(0, NUM_TILES);
     
-    // Create consonant tiles
+    // Create consonant tiles based on character grid
     const groundMat = new THREE.MeshPhongMaterial({ color: 0x44aa44 });
     for (let i = 0; i < consonantPositions.length; i++) {
         const pos = consonantPositions[i];
-        const shape = shapes[Math.floor(Math.random() * shapes.length)];
-        const worldX = (pos.col - 1) * tileSize;
-        const worldZ = (pos.row - 1) * tileSize;
+        const randomChar = englishChars[Math.floor(Math.random() * englishChars.length)];
+        const worldX = (pos.col - 1) * 58;
+        const worldZ = (pos.row - 1) * 58;
         
-        // Create ground shape (scaled to 60x60)
-        const groundShape = createGroundShape(shape, groundMat, 0.6);
+        // Generate character grid (15x15)
+        const charGrid = generateCharGrid('Dotum', 15, randomChar);
+        
+        // Create ground shape from grid
+        const groundShape = createGroundShapeFromGrid(charGrid, groundMat);
         groundShape.position.set(worldX, -0.5, worldZ);
-        groundShape.children.forEach(child => child.receiveShadow = true);
+        groundShape.children.forEach(child => {
+            child.receiveShadow = true;
+            groundMeshes.push(child);
+        });
+        groundShapes.push(groundShape);
         scene.add(groundShape);
         
         // Create trees in this tile
@@ -220,6 +228,9 @@ function initConsonantWorlds() {
     const centerFloor = new THREE.Mesh(new THREE.BoxGeometry(tileSize, 0.5, tileSize), centerGroundMat);
     centerFloor.position.set(0, -0.5, 0);
     centerFloor.receiveShadow = true;
+    centerFloor.userData.isGround = true;
+    groundMeshes.push(centerFloor);
+    groundShapes.push(centerFloor);
     scene.add(centerFloor);
     
     // Create trees in center tile
@@ -249,9 +260,11 @@ function createGroundShape(shapeType, groundMat, scale = 1) {
         case 'ㄱ':
             const h1 = new THREE.Mesh(new THREE.BoxGeometry(30*s, 0.5, 10*s), groundMat);
             h1.position.set(0, 0, 0);
+            h1.userData.isGround = true;
             group.add(h1);
             const v1 = new THREE.Mesh(new THREE.BoxGeometry(10*s, 0.5, 30*s), groundMat);
             v1.position.set(10*s, 0, 15*s);
+            v1.userData.isGround = true;
             group.add(v1);
             break;
         case 'ㄴ':
@@ -325,11 +338,11 @@ function createGroundShape(shapeType, groundMat, scale = 1) {
         case 'ㅈ':
             const x1 = new THREE.Mesh(new THREE.BoxGeometry(10*s, 0.5, 36*s), groundMat);
             x1.position.set(0, 0.1, 0);
-            x1.rotation.z = Math.PI / 4;
+            x1.rotation.y = Math.PI / 4;
             group.add(x1);
             const x2 = new THREE.Mesh(new THREE.BoxGeometry(10*s, 0.5, 36*s), groundMat);
             x2.position.set(0, 0.1, 0);
-            x2.rotation.z = -Math.PI / 4;
+            x2.rotation.y = -Math.PI / 4;
             group.add(x2);
             break;
         case 'ㅊ':
@@ -377,6 +390,37 @@ function createGroundShape(shapeType, groundMat, scale = 1) {
             group.add(hh4);
             break;
     }
+    // Mark all children as ground meshes
+    group.children.forEach(child => {
+        child.userData.isGround = true;
+    });
+    return group;
+}
+
+function createGroundShapeFromGrid(grid, material) {
+    const group = new THREE.Group();
+    const cellSize = 4; // 15x15 격자를 4배 확대하여 60x60 효과
+    
+    // 격자를 순회하며 1인 위치에 바닥 생성
+    for (let y = 0; y < grid.length; y++) {
+        for (let x = 0; x < grid[y].length; x++) {
+            if (grid[y][x] === 1) {
+                // 격자의 중심을 (0, 0)으로 맞추기
+                // 15x15의 중앙은 7.5이므로, 각 셀의 중앙이 정렬되도록 계산
+                const meshX = (x - 7.5) * cellSize;
+                const meshZ = (y - 7.5) * cellSize;
+                
+                const mesh = new THREE.Mesh(
+                    new THREE.BoxGeometry(cellSize * 0.95, 0.5, cellSize * 0.95),
+                    material
+                );
+                mesh.position.set(meshX, 0, meshZ);
+                mesh.userData.isGround = true;
+                group.add(mesh);
+            }
+        }
+    }
+    
     return group;
 }
 
@@ -414,11 +458,10 @@ function spawnMonster() {
     en.add(eyeR);
 
     const angle = Math.random() * Math.PI * 2;
-    en.position.set(
-        playerGroup.position.x + Math.cos(angle) * 8, 
-        0, 
-        playerGroup.position.z + Math.sin(angle) * 8
-    );
+    const spawnX = playerGroup.position.x + Math.cos(angle) * 8;
+    const spawnZ = playerGroup.position.z + Math.sin(angle) * 8;
+    
+    en.position.set(spawnX, 0, spawnZ);
     en.scale.set(0.01, 0.01, 0.01);
     en.userData = { 
         hp: 40 * stage, maxHp: 40 * stage, type, 
@@ -447,10 +490,12 @@ function update() {
     const mapBoundX = WORLD_SIZE / 2;
     const mapBoundZ = WORLD_SIZE / 2;
     
-    if (Math.abs(playerGroup.position.x) > mapBoundX || Math.abs(playerGroup.position.z) > mapBoundZ) {
+    // Check if player is on valid ground
+    if (!checkGroundCollision(playerGroup.position)) {
         PLAYER_DATA.isFalling = true;
         document.getElementById('fall-alert').style.display = 'block';
     } else {
+        PLAYER_DATA.isFalling = false;
         document.getElementById('fall-alert').style.display = 'none';
     }
 
@@ -536,8 +581,14 @@ function update() {
 
         if (dist > 1.2 && en.userData.state !== 'hurt') {
             const dir = new THREE.Vector3().subVectors(playerGroup.position, en.position).normalize();
-            en.position.x += dir.x * en.userData.speed;
-            en.position.z += dir.z * en.userData.speed;
+            const newX = en.position.x + dir.x * en.userData.speed;
+            const newZ = en.position.z + dir.z * en.userData.speed;
+            
+            // 새로운 위치에 바닥이 있으면 이동
+            if (checkGroundCollision({ x: newX, z: newZ, y: en.position.y })) {
+                en.position.x = newX;
+                en.position.z = newZ;
+            }
         } else if (en.userData.attackCooldown <= 0 && en.userData.state !== 'hurt') {
             en.userData.attackCooldown = 100;
             if (PLAYER_DATA.shieldTimer <= 0 && !PLAYER_DATA.isBlocking) {
@@ -547,6 +598,16 @@ function update() {
             }
         }
         if (en.userData.attackCooldown > 0) en.userData.attackCooldown--;
+        
+        // Check if enemy is on valid ground
+        if (!checkGroundCollision(en.position)) {
+            en.position.y -= 0.2;
+            if (en.position.y < -10) {
+                // Remove enemy if it falls too far
+                scene.remove(en);
+                enemies.splice(i, 1);
+            }
+        }
 
         if (en.userData.hp <= 0) {
             dropItem(en.position);
@@ -646,6 +707,41 @@ function checkTreeCollision(playerPos) {
         }
     }
     return false;
+}
+
+function checkGroundCollision(pos) {
+    // groundShapes의 각 shape에 대해 ray casting 수행
+    if (groundShapes.length === 0) return true;
+    
+    // 캐릭터 주변의 여러 위치에서 바닥 확인
+    const checkPoints = [
+        { x: pos.x, z: pos.z },           // 중앙
+        { x: pos.x + 1, z: pos.z },       // 오른쪽
+        { x: pos.x - 1, z: pos.z },       // 왼쪽
+        { x: pos.x, z: pos.z + 1 },       // 앞
+        { x: pos.x, z: pos.z - 1 },       // 뒤
+        { x: pos.x + 0.7, z: pos.z + 0.7 }, // 대각선
+        { x: pos.x - 0.7, z: pos.z + 0.7 }, // 대각선
+        { x: pos.x + 0.7, z: pos.z - 0.7 }, // 대각선
+        { x: pos.x - 0.7, z: pos.z - 0.7 }  // 대각선
+    ];
+    
+    // 하나라도 바닥이 있으면 안전
+    for (let checkPos of checkPoints) {
+        raycaster.set(
+            new THREE.Vector3(checkPos.x, pos.y + 1, checkPos.z), 
+            new THREE.Vector3(0, -1, 0)
+        );
+        
+        for (let shape of groundShapes) {
+            const intersects = raycaster.intersectObject(shape, true);
+            if (intersects.length > 0 && intersects[0].distance > 0.5) {
+                return true; // 바닥 감지
+            }
+        }
+    }
+    
+    return false; // 모든 위치에서 바닥 없음 → 떨어짐
 }
 
 function checkLevelUp() {

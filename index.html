@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>숲속의 작은 용사 3D</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div id="game-container">
+        <div id="ui-overlay">
+            <div class="hp-bar-outer"><div id="hp-fill"></div></div>
+            <div class="stats-panel">
+                <div class="money-tag">💰 <span id="money-val">0</span></div>
+                <div>LV: <span id="lv-val">1</span></div>
+                <div style="font-size: 14px; color: #aaa;">EXP: <span id="xp-val">0</span> / <span id="next-xp-val">5</span></div>
+            </div>
+            <div id="timer">Stage 1 - 05:00</div>
+            <div id="charge-bar"><div id="charge-fill"></div></div>
+            <div id="fall-alert">⚠️ 위험! 월드 밖입니다! ⚠️</div>
+        </div>
+
+        <div id="start-screen" class="overlay">
+            <h1 style="font-size: 60px; color: #4CAF50; margin-bottom: 10px;">숲속의 작은 용사 3D</h1>
+            <p style="font-size: 20px; color: #aaa;">- 월드 확장 에디션 -</p>
+            <button onclick="initGame()">모험 시작</button>
+        </div>
+
+        <div id="shop-ui" class="overlay" style="display: none;">
+            <h1 style="color: #ffd700;">마법 상점</h1>
+            <div class="shop-items">
+                <div class="shop-item"><h3>긴 칼</h3><p>범위 증가</p><button onclick="buyWeapon('longsword', 100)">💰 100</button></div>
+                <div class="shop-item"><h3>강철 도끼</h3><p>대미지 강화</p><button onclick="buyWeapon('axe', 250)">💰 250</button></div>
+                <div class="shop-item"><h3>전설의 검</h3><p>초강력</p><button onclick="buyWeapon('legend', 500)">💰 500</button></div>
+            </div>
+            <button onclick="nextStage()" style="background: #555; margin-top: 40px;">다음 스테이지로</button>
+        </div>
+
+        <div id="game-over" class="overlay" style="display: none;">
+            <h1 id="fail-title" style="font-size: 60px; color: #ff0040;">GAME OVER</h1>
+            <p id="fail-msg">용사가 쓰러졌습니다...</p>
+            <button onclick="location.reload()">다시 시작</button>
+        </div>
+    </div>
+
+    <!-- 외부 라이브러리 및 게임 스크립트 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="js/game.js"></script>
+</body>
+</html>

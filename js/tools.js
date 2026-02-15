@@ -1,90 +1,84 @@
-<!DOCTYPE html>
-<html lang="ko">
+/**
+ * 한글 또는 문자를 특정 격자 크기의 2차원 배열(0, 1)로 변환하는 함수
+ * * @param {string} font - 사용할 폰트명 (예: 'Malgun Gothic', 'Dotum')
+ * @param {number} gridSize - 결과 격자의 크기 (예: 32 -> 32x32)
+ * @param {string} char - 변환할 글자 (한 글자 권장)
+ * @returns {Array<Array<number>>} 0과 1로 구성된 2차원 배열
+ */
+function generateCharGrid(font, gridSize, char) {
+    // 1. 작업을 위한 보이지 않는 캔버스 생성
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>숲속의 작은 용사 3D</title>
-    <link rel="stylesheet" href="css/style.css">
-</head>
+    // 2. 고해상도 렌더링을 위해 임시 캔버스 크기를 크게 설정 (정밀한 여백 계산용)
+    const renderSize = 200;
+    canvas.width = renderSize;
+    canvas.height = renderSize;
 
-<body>
-    <div id="game-container">
-        <div id="ui-overlay">
-            <div class="hp-bar-outer" style="position: relative;">
-                <div id="hp-fill"></div>
-                <div id="hp-text"
-                    style="position: absolute; width: 100%; text-align: center; color: white; font-weight: bold; font-size: 14px; text-shadow: 1px 1px 2px black; line-height: 20px;">
-                    100 / 100</div>
-            </div>
-            <div class="stats-panel">
-                <div class="money-tag">💰 <span id="money-val">0</span></div>
-                <div>LV: <span id="lv-val">1</span></div>
-                <div style="font-size: 14px; color: #aaa;">EXP: <span id="xp-val">0</span> / <span
-                        id="next-xp-val">5</span></div>
-                <div style="font-size: 14px; color: #aaa;">EXP: <span id="xp-val">0</span> / <span
-                        id="next-xp-val">5</span></div>
-                <div style="margin-top: 5px; color: #ff00ff; font-weight: bold;">SCORE: <span id="score-val">0</span>
-                </div>
-            </div>
-            <div id="hud-center"
-                style="position: absolute; top: 70px; left: 50%; transform: translateX(-50%); text-align: center; color: white;">
-                <div id="stage-display" style="font-size: 24px; font-weight: bold; margin-bottom: 5px;">Stage 1</div>
-                <div id="timer-display" style="font-size: 20px; color: #ffeb3b; margin-bottom: 5px;">02:00</div>
-                <div id="enemy-count-display" style="font-size: 16px; color: #ff5252;">남은 적: 10</div>
-            </div>
-            <div id="charge-bar">
-                <div id="charge-fill"></div>
-            </div>
-            <div id="fall-alert">⚠️ 위험! 월드 밖입니다! ⚠️</div>
-        </div>
+    // 3. 글자 렌더링
+    ctx.fillStyle = '#000000';
+    ctx.font = `bold ${renderSize * 0.8}px ${font}`;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    ctx.clearRect(0, 0, renderSize, renderSize);
+    ctx.fillText(char, renderSize / 2, renderSize / 2);
 
-        <div id="start-screen" class="overlay">
-            <h1 style="font-size: 60px; color: #4CAF50; margin-bottom: 10px;">숲속의 작은 용사 3D</h1>
-            <p style="font-size: 20px; color: #aaa;">- 월드 확장 에디션 -</p>
-            <button onclick="initGame()">모험 시작</button>
-            <div id="game-version">Ver 1.0</div>
-        </div>
+    // 4. Bounding Box (실제 글자가 그려진 영역) 찾기
+    const imgData = ctx.getImageData(0, 0, renderSize, renderSize);
+    const pixels = imgData.data;
+    let minX = renderSize, minY = renderSize, maxX = 0, maxY = 0;
+    let found = false;
 
-        <div id="shop-ui" class="overlay" style="display: none;">
-            <h1 style="color: #ffd700; margin-bottom: 20px;">마법 상점</h1>
+    for (let y = 0; y < renderSize; y++) {
+        for (let x = 0; x < renderSize; x++) {
+            const alpha = pixels[(y * renderSize + x) * 4 + 3];
+            if (alpha > 50) { // 픽셀이 투명하지 않으면 영역에 포함
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+                found = true;
+            }
+        }
+    }
 
-            <div
-                style="background: rgba(0,0,0,0.5); padding: 15px; border-radius: 10px; margin-bottom: 20px; width: 80%;">
-                <h3 style="margin: 0 0 10px 0; color: #00ffff;">능력치 강화</h3>
-                <div class="shop-items">
-                    <div class="shop-item">
-                        <h3>칼 길이</h3>
-                        <p>+30% 증가</p>
-                        <button id="btn-upgrade-sword" onclick="buyUpgrade('swordLength')">💰 100</button>
-                    </div>
-                    <div class="shop-item">
-                        <h3>이동 속도</h3>
-                        <p>+5% 증가</p>
-                        <button id="btn-upgrade-speed" onclick="buyUpgrade('moveSpeed')">💰 100</button>
-                    </div>
-                    <div class="shop-item">
-                        <h3>점프력</h3>
-                        <p>+5% 증가</p>
-                        <button id="btn-upgrade-jump" onclick="buyUpgrade('jumpPower')">💰 100</button>
-                    </div>
-                </div>
-            </div>
+    // 글자가 없는 경우 빈 배열 반환
+    if (!found) return Array.from({ length: gridSize }, () => Array(gridSize).fill(0));
 
-            <button onclick="nextStage()" style="background: #555; margin-top: 40px; width: 200px;">다음 스테이지로</button>
-        </div>
+    // 5. 글자 영역만 추출
+    const width = maxX - minX + 1;
+    const height = maxY - minY + 1;
+    const trimmedData = ctx.getImageData(minX, minY, width, height);
 
-        <div id="game-over" class="overlay" style="display: none;">
-            <h1 id="fail-title" style="font-size: 60px; color: #ff0040;">GAME OVER</h1>
-            <p id="fail-msg">용사가 쓰러졌습니다...</p>
-            <button onclick="location.reload()">다시 시작</button>
-        </div>
-    </div>
+    // 6. 목표 격자 크기에 꽉 차게 리사이징하여 다시 그리기
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = width;
+    tempCanvas.height = height;
+    tempCanvas.getContext('2d').putImageData(trimmedData, 0, 0);
 
-    <!-- 외부 라이브러리 및 게임 스크립트 -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="js/tools.js"></script>
-    <script src="js/game.js"></script>
-</body>
+    canvas.width = gridSize;
+    canvas.height = gridSize;
+    ctx.clearRect(0, 0, gridSize, gridSize);
+    // drawImage를 사용해 비트맵 데이터를 목표 크기에 맞게 Stretch 시킴
+    ctx.drawImage(tempCanvas, 0, 0, width, height, 0, 0, gridSize, gridSize);
 
-</html>
+    // 7. 최종 픽셀 데이터를 읽어 0/1 배열로 변환
+    const finalPixels = ctx.getImageData(0, 0, gridSize, gridSize).data;
+    const resultGrid = [];
+
+    for (let y = 0; y < gridSize; y++) {
+        const row = [];
+        for (let x = 0; x < gridSize; x++) {
+            const alpha = finalPixels[(y * gridSize + x) * 4 + 3];
+            // 투명도 50% 이상을 1(색상 있음)로 간주
+            row.push(alpha > 128 ? 1 : 0);
+        }
+        resultGrid.push(row);
+    }
+
+    return resultGrid;
+}
+
+// --- 사용 예시 ---
+// const myGrid = generateCharGrid('Malgun Gothic', 32, '가');
+// console.log(myGrid); // 32x32 형태의 0, 1 배열 출력

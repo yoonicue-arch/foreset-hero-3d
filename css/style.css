@@ -110,3 +110,12 @@ button:active { border-bottom: none; transform: translateY(5px); }
     display: none; 
     text-shadow: 2px 2px 4px #000;
 }
+
+#game-version {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    font-size: 16px;
+    color: rgba(255, 255, 255, 0.5);
+    pointer-events: none;
+}

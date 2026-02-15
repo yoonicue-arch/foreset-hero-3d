@@ -1,158 +1,93 @@
 /**
- * Forest Hero 3D - Main Game Logic v1.5
- * Updates:
- * - Debug UI integration (Speed, Jump, Attack rate)
- * - Improved Eye positioning for visibility
+ * Forest Hero 3D - Main Game Logic
+ * Using Three.js (WebGL)
  */
 
-console.log("Game Script Loaded v1.5");
+console.log("📝 Game script loaded");
 
-// --- 디버그 설정 ---
-const debugSettings = {
-    enemySpeedMult: 1,
-    jumpForce: 12,
-    attackSpeedMult: 1
-};
-
-// --- 사운드 시스템 ---
+// --- Sound System ---
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+console.log("🔊 Audio context created");
 function playSound(type) {
     if (audioCtx.state === 'suspended') return;
     const osc = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
     osc.connect(gain); gain.connect(audioCtx.destination);
     const now = audioCtx.currentTime;
-    
-    try {
-        switch(type) {
-            case 'jump': 
-                osc.type = 'square'; 
-                osc.frequency.setValueAtTime(200, now); 
-                osc.frequency.exponentialRampToValueAtTime(800, now + 0.1); 
-                gain.gain.setValueAtTime(0.05, now); 
-                osc.start(); osc.stop(now + 0.1); 
-                break;
-            case 'attack': 
-                osc.type = 'sawtooth'; 
-                osc.frequency.setValueAtTime(400, now); 
-                osc.frequency.exponentialRampToValueAtTime(100, now + 0.1); 
-                gain.gain.setValueAtTime(0.05, now); 
-                osc.start(); osc.stop(now + 0.1); 
-                break;
-            case 'hit': 
-                osc.type = 'sine'; 
-                osc.frequency.setValueAtTime(100, now); 
-                gain.gain.setValueAtTime(0.1, now); 
-                osc.start(); osc.stop(now + 0.05); 
-                break;
-            case 'levelup': 
-                [440, 554, 659].forEach((f, i) => { 
-                    const o = audioCtx.createOscillator(); 
-                    const g = audioCtx.createGain(); 
-                    o.type = 'sine'; o.connect(g); g.connect(audioCtx.destination); 
-                    o.frequency.setValueAtTime(f, now + i*0.1); 
-                    g.gain.setValueAtTime(0.05, now + i*0.1); 
-                    o.start(now + i*0.1); o.stop(now + i*0.1 + 0.1); 
-                }); 
-                break;
-            case 'spawn': 
-                osc.type = 'sine'; 
-                osc.frequency.setValueAtTime(600, now); 
-                osc.frequency.exponentialRampToValueAtTime(1000, now + 0.1); 
-                gain.gain.setValueAtTime(0.05, now); 
-                osc.start(); osc.stop(now + 0.1); 
-                break;
-        }
-    } catch(e) {}
+    switch(type) {
+        case 'jump': osc.type = 'square'; osc.frequency.setValueAtTime(200, now); osc.frequency.exponentialRampToValueAtTime(800, now + 0.1); gain.gain.setValueAtTime(0.05, now); osc.start(); osc.stop(now + 0.1); break;
+        case 'attack': osc.type = 'sawtooth'; osc.frequency.setValueAtTime(400, now); osc.frequency.exponentialRampToValueAtTime(100, now + 0.1); gain.gain.setValueAtTime(0.05, now); osc.start(); osc.stop(now + 0.1); break;
+        case 'hit': osc.type = 'sine'; osc.frequency.setValueAtTime(100, now); gain.gain.setValueAtTime(0.1, now); osc.start(); osc.stop(now + 0.05); break;
+        case 'levelup': [440, 554, 659].forEach((f, i) => { const o = audioCtx.createOscillator(); const g = audioCtx.createGain(); o.type = 'sine'; o.connect(g); g.connect(audioCtx.destination); o.frequency.setValueAtTime(f, now + i*0.1); g.gain.setValueAtTime(0.05, now + i*0.1); o.start(now + i*0.1); o.stop(now + i*0.1 + 0.1); }); break;
+        case 'spawn': osc.type = 'sine'; osc.frequency.setValueAtTime(600, now); osc.frequency.exponentialRampToValueAtTime(1000, now + 0.1); gain.gain.setValueAtTime(0.05, now); osc.start(); osc.stop(now + 0.1); break;
+    }
 }
 
-// --- 전역 변수 ---
-let scene, camera, renderer, clock, world;
+// --- 3D Scene Setup ---
+let scene, camera, renderer, clock;
 let playerGroup, swordMesh, shieldMesh;
-let trees = [], enemies = [], items = [], projectiles = [], particles = [];
+let trees = [], enemies = [], items = [], projectiles = [];
 let gameActive = false;
 let stage = 1;
-let stageTime = 60;
+let stageTime = 120; // 2 minutes
 let money = 0;
+let totalEnemiesInStage = 10;
+let enemiesDefeated = 0;
 const keys = {};
 
-let totalEnemiesInStage = 10;
-let enemiesSpawned = 0;
-let enemiesDefeated = 0;
-
 const PLAYER_DATA = {
+    x: 0, y: 0, z: 0,
     hp: 100, maxHp: 100, lv: 1, xp: 0, nextXp: 5,
-    speed: 0.15, direction: 1, isAttacking: false, 
-    attackTimer: 0, chargeTime: 0, shieldTimer: 0,
-    isFalling: false, body: null, weapon: 'sword'
+    speed: 0.15, jumpV: 0, isJumping: false,
+    isAttacking: false, attackTimer: 0, chargeTime: 0,
+    weapon: 'sword', direction: 1, shieldTimer: 0,
+    isFalling: false
 };
 
-const WORLD_WIDTH_Z = 8;
+const WORLD_SIZE = 180; // Total world size 180×180
+const TILE_SIZE = 60; // Each tile 60×60
+const GRID_SIZE = 3; // 3×3 grid
+const NUM_TILES = 8; // 8 consonant tiles (excluding center)
+let consonantWorlds = []; // Store world info
 
-// --- 물리 초기화 ---
-function initPhysics() {
-    if (typeof CANNON === 'undefined') {
-        alert("물리 엔진 로딩 실패! 새로고침 해주세요.");
-        return;
-    }
-    world = new CANNON.World();
-    world.gravity.set(0, -20, 0); 
-    world.broadphase = new CANNON.NaiveBroadphase();
-    
-    const groundBody = new CANNON.Body({
-        mass: 0, 
-        shape: new CANNON.Box(new CANNON.Vec3(1000, 0.5, WORLD_WIDTH_Z / 2))
-    });
-    groundBody.position.y = -0.5;
-    world.addBody(groundBody);
-}
-
-// --- 게임 초기화 ---
 function initGame() {
-    const startScreen = document.getElementById('start-screen');
-    if (startScreen) startScreen.style.display = 'none';
+    console.log("🎮 initGame() called");
+    document.getElementById('start-screen').style.display = 'none';
     if (audioCtx.state === 'suspended') audioCtx.resume();
     
-    // 디버그 UI 이벤트 리스너 연결
-    setupDebugListeners();
-
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x87CEEB);
     
-    camera = new THREE.PerspectiveCamera(60, 1024 / 768, 0.1, 1000);
-    camera.position.set(0, 6, 14);
+    camera = new THREE.PerspectiveCamera(75, 1024 / 768, 0.1, 2000);
+    camera.position.set(0, 50, 80);
     camera.lookAt(0, 0, 0);
 
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(1024, 768);
     renderer.shadowMap.enabled = true;
-    
     const container = document.getElementById('game-container');
-    if (container.querySelector('canvas')) container.removeChild(container.querySelector('canvas'));
+    const existingCanvas = container.querySelector('canvas');
+    if (existingCanvas) existingCanvas.remove();
     container.appendChild(renderer.domElement);
 
     const light = new THREE.DirectionalLight(0xffffff, 1.2);
-    light.position.set(5, 10, 5);
+    light.position.set(10, 15, 10);
     light.castShadow = true;
+    light.shadow.mapSize.width = 2048;
+    light.shadow.mapSize.height = 2048;
+    light.shadow.camera.left = -100;
+    light.shadow.camera.right = 100;
+    light.shadow.camera.top = 100;
+    light.shadow.camera.bottom = -100;
+    light.shadow.camera.near = 0.1;
+    light.shadow.camera.far = 200;
     scene.add(light);
-    scene.add(new THREE.AmbientLight(0x606060));
-
-    // 바닥 시각화
-    const groundMesh = new THREE.Mesh(
-        new THREE.BoxGeometry(2000, 1, WORLD_WIDTH_Z),
-        new THREE.MeshPhongMaterial({ color: 0x44aa44 })
-    );
-    groundMesh.position.y = -0.5;
-    groundMesh.receiveShadow = true;
-    scene.add(groundMesh);
-
-    initPhysics();
-    createPlayer();
-    initTrees();
+    scene.add(new THREE.AmbientLight(0x808080));
     
-    // 게임 리셋
-    stage = 1; stageTime = 60; 
-    totalEnemiesInStage = 10; enemiesSpawned = 0; enemiesDefeated = 0;
+    createPlayer();
+    // Player spawn at (1,1) center
+    playerGroup.position.set(0, 0, 0);
+    initConsonantWorlds();
     
     clock = new THREE.Clock();
     gameActive = true;
@@ -165,346 +100,614 @@ function initGame() {
     window.addEventListener('keyup', e => keys[e.code] = false);
 }
 
-function setupDebugListeners() {
-    const speedInput = document.getElementById('dbg-enemy-speed');
-    const jumpInput = document.getElementById('dbg-jump-height');
-    const attackInput = document.getElementById('dbg-attack-speed');
-
-    if (speedInput) speedInput.addEventListener('input', (e) => debugSettings.enemySpeedMult = parseFloat(e.target.value));
-    if (jumpInput) jumpInput.addEventListener('input', (e) => debugSettings.jumpForce = parseFloat(e.target.value));
-    if (attackInput) attackInput.addEventListener('input', (e) => debugSettings.attackSpeedMult = parseFloat(e.target.value));
-}
-
 function createPlayer() {
     playerGroup = new THREE.Group();
-    const bodyMesh = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1, 0.5), new THREE.MeshPhongMaterial({ color: 0x1e90ff }));
-    bodyMesh.position.y = 0.5; bodyMesh.castShadow = true; playerGroup.add(bodyMesh);
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 0.6), new THREE.MeshPhongMaterial({ color: 0xffdbac }));
-    head.position.y = 1.3; playerGroup.add(head);
+    
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1, 0.5), new THREE.MeshPhongMaterial({ color: 0x1e90ff }));
+    body.position.y = 0.5;
+    body.castShadow = true;
+    playerGroup.add(body);
 
-    // 눈 추가 (앞으로 조금 더 튀어나오게 z값 조정)
-    const eyeL = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), new THREE.MeshBasicMaterial({ color: 0x000000 }));
-    eyeL.position.set(0.15, 1.4, 0.32); // z: 0.3 -> 0.32
-    playerGroup.add(eyeL);
-    const eyeR = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), new THREE.MeshBasicMaterial({ color: 0x000000 }));
-    eyeR.position.set(-0.15, 1.4, 0.32);
-    playerGroup.add(eyeR);
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 0.6), new THREE.MeshPhongMaterial({ color: 0xffdbac }));
+    head.position.y = 1.3;
+    playerGroup.add(head);
+
+    // Eyes on all sides
+    // Front eyes
+    const eyeFL = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+    eyeFL.position.set(0.15, 1.4, 0.3);
+    playerGroup.add(eyeFL);
+    const eyeFR = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+    eyeFR.position.set(-0.15, 1.4, 0.3);
+    playerGroup.add(eyeFR);
+    
+    // Back eyes
+    const eyeBL = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+    eyeBL.position.set(0.15, 1.4, -0.3);
+    playerGroup.add(eyeBL);
+    const eyeBR = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+    eyeBR.position.set(-0.15, 1.4, -0.3);
+    playerGroup.add(eyeBR);
+    
+    // Left eyes
+    const eyeLTop = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+    eyeLTop.position.set(-0.3, 1.4, 0.15);
+    playerGroup.add(eyeLTop);
+    const eyeLBot = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+    eyeLBot.position.set(-0.3, 1.4, -0.15);
+    playerGroup.add(eyeLBot);
+    
+    // Right eyes
+    const eyeRTop = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+    eyeRTop.position.set(0.3, 1.4, 0.15);
+    playerGroup.add(eyeRTop);
+    const eyeRBot = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+    eyeRBot.position.set(0.3, 1.4, -0.15);
+    playerGroup.add(eyeRBot);
 
     const swordGeo = new THREE.BoxGeometry(0.1, 1.2, 0.1);
     const swordMat = new THREE.MeshPhongMaterial({ color: 0xdddddd });
     swordMesh = new THREE.Mesh(swordGeo, swordMat);
-    swordMesh.position.set(0.6, 0.8, 0); playerGroup.add(swordMesh);
+    swordMesh.position.set(0.6, 0.8, 0);
+    playerGroup.add(swordMesh);
 
-    const shape = new CANNON.Box(new CANNON.Vec3(0.4, 0.8, 0.25));
-    PLAYER_DATA.body = new CANNON.Body({ mass: 5, shape: shape, fixedRotation: true });
-    PLAYER_DATA.body.position.set(0, 2, 0); 
-    world.addBody(PLAYER_DATA.body);
+    shieldMesh = new THREE.Mesh(new THREE.SphereGeometry(1.2, 16, 16), new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.3 }));
+    shieldMesh.visible = false;
+    playerGroup.add(shieldMesh);
 
     scene.add(playerGroup);
 }
 
-function initTrees() {
-    trees = [];
-    for(let i=0; i<40; i++) {
+function initConsonantWorlds() {
+    const shapes = ['ㄱ', 'ㄴ', 'ㄷ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅅ', 'ㅇ', 'ㅈ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅎ'];
+    const tileSize = TILE_SIZE; // 60
+    
+    // Define all 9 positions (0,0) to (2,2)
+    const positions = [];
+    for (let row = 0; row < GRID_SIZE; row++) {
+        for (let col = 0; col < GRID_SIZE; col++) {
+            positions.push({ row, col });
+        }
+    }
+    
+    // Separate center (1,1) from others
+    const centerPos = positions.find(p => p.row === 1 && p.col === 1);
+    const otherPositions = positions.filter(p => !(p.row === 1 && p.col === 1));
+    
+    // Shuffle and select 8 random positions for consonant tiles
+    for (let i = otherPositions.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [otherPositions[i], otherPositions[j]] = [otherPositions[j], otherPositions[i]];
+    }
+    const consonantPositions = otherPositions.slice(0, NUM_TILES);
+    
+    // Create consonant tiles
+    const groundMat = new THREE.MeshPhongMaterial({ color: 0x44aa44 });
+    for (let i = 0; i < consonantPositions.length; i++) {
+        const pos = consonantPositions[i];
+        const shape = shapes[Math.floor(Math.random() * shapes.length)];
+        const worldX = (pos.col - 1) * tileSize;
+        const worldZ = (pos.row - 1) * tileSize;
+        
+        // Create ground shape (scaled to 60x60)
+        const groundShape = createGroundShape(shape, groundMat, 0.6);
+        groundShape.position.set(worldX, -0.5, worldZ);
+        groundShape.children.forEach(child => child.receiveShadow = true);
+        scene.add(groundShape);
+        
+        // Create trees in this tile
+        const treesPerWorld = 24;
+        for (let j = 0; j < treesPerWorld; j++) {
+            const tree = createTreeMesh();
+            let angle, dist, posX, posZ;
+            
+            // 캐릭터 반경 3 안에는 생성 안 함
+            do {
+                angle = Math.random() * Math.PI * 2;
+                dist = Math.random() * (tileSize / 2 - 2);
+                posX = worldX + Math.cos(angle) * dist;
+                posZ = worldZ + Math.sin(angle) * dist;
+            } while (Math.sqrt(posX * posX + posZ * posZ) < 3);
+            
+            tree.position.set(posX, 0, posZ);
+            scene.add(tree);
+            trees.push(tree);
+        }
+    }
+    
+    // Create center tile (1,1) - special ground
+    const centerGroundMat = new THREE.MeshPhongMaterial({ color: 0x6eb366 });
+    const centerFloor = new THREE.Mesh(new THREE.BoxGeometry(tileSize, 0.5, tileSize), centerGroundMat);
+    centerFloor.position.set(0, -0.5, 0);
+    centerFloor.receiveShadow = true;
+    scene.add(centerFloor);
+    
+    // Create trees in center tile
+    const centerTreesCount = 24;
+    for (let j = 0; j < centerTreesCount; j++) {
         const tree = createTreeMesh();
-        tree.position.set(Math.random()*400 - 200, 0, (Math.random() > 0.5 ? 1 : -1) * (6 + Math.random()*4));
+        let angle, dist, posX, posZ;
+        
+        // 캐릭터 반경 3 안에는 생성 안 함
+        do {
+            angle = Math.random() * Math.PI * 2;
+            dist = Math.random() * (tileSize / 2 - 2);
+            posX = Math.cos(angle) * dist;
+            posZ = Math.sin(angle) * dist;
+        } while (Math.sqrt(posX * posX + posZ * posZ) < 3);
+        
+        tree.position.set(posX, 0, posZ);
         scene.add(tree);
         trees.push(tree);
     }
 }
 
+function createGroundShape(shapeType, groundMat, scale = 1) {
+    const group = new THREE.Group();
+    const s = scale;
+    switch(shapeType) {
+        case 'ㄱ':
+            const h1 = new THREE.Mesh(new THREE.BoxGeometry(30*s, 0.5, 10*s), groundMat);
+            h1.position.set(0, 0, 0);
+            group.add(h1);
+            const v1 = new THREE.Mesh(new THREE.BoxGeometry(10*s, 0.5, 30*s), groundMat);
+            v1.position.set(10*s, 0, 15*s);
+            group.add(v1);
+            break;
+        case 'ㄴ':
+            const l1 = new THREE.Mesh(new THREE.BoxGeometry(30*s, 0.5, 10*s), groundMat);
+            l1.position.set(0, 0, -10*s);
+            group.add(l1);
+            const l2 = new THREE.Mesh(new THREE.BoxGeometry(10*s, 0.5, 30*s), groundMat);
+            l2.position.set(0, 0, 10*s);
+            group.add(l2);
+            break;
+        case 'ㄷ':
+            const d1 = new THREE.Mesh(new THREE.BoxGeometry(10*s, 0.5, 30*s), groundMat);
+            d1.position.set(-15*s, 0, 0);
+            group.add(d1);
+            const d2 = new THREE.Mesh(new THREE.BoxGeometry(30*s, 0.5, 10*s), groundMat);
+            d2.position.set(0, 0, -10*s);
+            group.add(d2);
+            const d3 = new THREE.Mesh(new THREE.BoxGeometry(30*s, 0.5, 10*s), groundMat);
+            d3.position.set(0, 0, 10*s);
+            group.add(d3);
+            break;
+        case 'ㄹ':
+            const r1 = new THREE.Mesh(new THREE.BoxGeometry(10*s, 0.5, 30*s), groundMat);
+            r1.position.set(-12*s, 0, 0);
+            group.add(r1);
+            const r2 = new THREE.Mesh(new THREE.BoxGeometry(30*s, 0.5, 10*s), groundMat);
+            r2.position.set(6*s, 0, -10*s);
+            group.add(r2);
+            const r3 = new THREE.Mesh(new THREE.BoxGeometry(30*s, 0.5, 10*s), groundMat);
+            r3.position.set(6*s, 0, 10*s);
+            group.add(r3);
+            break;
+        case 'ㅁ':
+            const b1 = new THREE.Mesh(new THREE.BoxGeometry(10*s, 0.5, 30*s), groundMat);
+            b1.position.set(-15*s, 0, 0);
+            group.add(b1);
+            const b2 = new THREE.Mesh(new THREE.BoxGeometry(10*s, 0.5, 30*s), groundMat);
+            b2.position.set(15*s, 0, 0);
+            group.add(b2);
+            const b3 = new THREE.Mesh(new THREE.BoxGeometry(30*s, 0.5, 10*s), groundMat);
+            b3.position.set(0, 0, -10*s);
+            group.add(b3);
+            break;
+        case 'ㅂ':
+            const bx1 = new THREE.Mesh(new THREE.BoxGeometry(10*s, 0.5, 30*s), groundMat);
+            bx1.position.set(-15*s, 0, 0);
+            group.add(bx1);
+            const bx2 = new THREE.Mesh(new THREE.BoxGeometry(10*s, 0.5, 30*s), groundMat);
+            bx2.position.set(15*s, 0, 0);
+            group.add(bx2);
+            const bx3 = new THREE.Mesh(new THREE.BoxGeometry(30*s, 0.5, 10*s), groundMat);
+            bx3.position.set(0, 0, -10*s);
+            group.add(bx3);
+            const bx4 = new THREE.Mesh(new THREE.BoxGeometry(30*s, 0.5, 10*s), groundMat);
+            bx4.position.set(0, 0, 10*s);
+            group.add(bx4);
+            break;
+        case 'ㅅ':
+            const s1 = new THREE.Mesh(new THREE.BoxGeometry(30*s, 0.5, 10*s), groundMat);
+            s1.position.set(6*s, 0, -10*s);
+            group.add(s1);
+            const s2 = new THREE.Mesh(new THREE.BoxGeometry(30*s, 0.5, 10*s), groundMat);
+            s2.position.set(-6*s, 0, 10*s);
+            group.add(s2);
+            break;
+        case 'ㅇ':
+            const circ = new THREE.Mesh(new THREE.CylinderGeometry(15*s, 15*s, 0.5, 32), groundMat);
+            circ.position.set(0, 0, 0);
+            group.add(circ);
+            break;
+        case 'ㅈ':
+            const x1 = new THREE.Mesh(new THREE.BoxGeometry(10*s, 0.5, 36*s), groundMat);
+            x1.position.set(0, 0.1, 0);
+            x1.rotation.z = Math.PI / 4;
+            group.add(x1);
+            const x2 = new THREE.Mesh(new THREE.BoxGeometry(10*s, 0.5, 36*s), groundMat);
+            x2.position.set(0, 0.1, 0);
+            x2.rotation.z = -Math.PI / 4;
+            group.add(x2);
+            break;
+        case 'ㅊ':
+            const y1 = new THREE.Mesh(new THREE.BoxGeometry(10*s, 0.5, 30*s), groundMat);
+            y1.position.set(-10*s, 0, 0);
+            group.add(y1);
+            const y2 = new THREE.Mesh(new THREE.BoxGeometry(10*s, 0.5, 30*s), groundMat);
+            y2.position.set(10*s, 0, 0);
+            group.add(y2);
+            const y3 = new THREE.Mesh(new THREE.BoxGeometry(24*s, 0.5, 10*s), groundMat);
+            y3.position.set(0, 0, -15*s);
+            group.add(y3);
+            break;
+        case 'ㅋ':
+            const k1 = new THREE.Mesh(new THREE.BoxGeometry(10*s, 0.5, 30*s), groundMat);
+            k1.position.set(-12*s, 0, 0);
+            group.add(k1);
+            const k2 = new THREE.Mesh(new THREE.BoxGeometry(24*s, 0.5, 10*s), groundMat);
+            k2.position.set(6*s, 0, -10*s);
+            group.add(k2);
+            const k3 = new THREE.Mesh(new THREE.BoxGeometry(24*s, 0.5, 10*s), groundMat);
+            k3.position.set(6*s, 0, 10*s);
+            group.add(k3);
+            break;
+        case 'ㅌ':
+            const t1 = new THREE.Mesh(new THREE.BoxGeometry(30*s, 0.5, 10*s), groundMat);
+            t1.position.set(0, 0, -15*s);
+            group.add(t1);
+            const t2 = new THREE.Mesh(new THREE.BoxGeometry(10*s, 0.5, 30*s), groundMat);
+            t2.position.set(0, 0, 0);
+            group.add(t2);
+            break;
+        case 'ㅎ':
+            const hh1 = new THREE.Mesh(new THREE.BoxGeometry(10*s, 0.5, 30*s), groundMat);
+            hh1.position.set(-10*s, 0, 0);
+            group.add(hh1);
+            const hh2 = new THREE.Mesh(new THREE.BoxGeometry(10*s, 0.5, 30*s), groundMat);
+            hh2.position.set(10*s, 0, 0);
+            group.add(hh2);
+            const hh3 = new THREE.Mesh(new THREE.BoxGeometry(18*s, 0.5, 10*s), groundMat);
+            hh3.position.set(0, 0, -10*s);
+            group.add(hh3);
+            const hh4 = new THREE.Mesh(new THREE.BoxGeometry(18*s, 0.5, 10*s), groundMat);
+            hh4.position.set(0, 0, 10*s);
+            group.add(hh4);
+            break;
+    }
+    return group;
+}
+
 function createTreeMesh() {
     const g = new THREE.Group();
-    const trunk = new THREE.Mesh(new THREE.BoxGeometry(0.4, 1.5, 0.4), new THREE.MeshPhongMaterial({ color: 0x5c4033 }));
-    trunk.position.y = 0.75; g.add(trunk);
-    const leaves = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.5, 1.5), new THREE.MeshPhongMaterial({ color: 0x228b22 }));
-    leaves.position.y = 2; g.add(leaves);
+    const trunk = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1, 0.3), new THREE.MeshPhongMaterial({ color: 0x3e2716 }));
+    trunk.position.y = 0.5;
+    g.add(trunk);
+    const leaves = new THREE.Mesh(new THREE.BoxGeometry(1.5, 2, 1.5), new THREE.MeshPhongMaterial({ color: 0x234d20 }));
+    leaves.position.y = 2;
+    g.add(leaves);
+    
+    // Add collision data
+    g.userData = { isTree: true, radius: 0.7 };
     return g;
 }
 
-function createEnemyHPBar() {
-    const canvas = document.createElement('canvas');
-    canvas.width = 64; canvas.height = 8;
-    const ctx = canvas.getContext('2d');
-    const texture = new THREE.CanvasTexture(canvas);
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture }));
-    sprite.scale.set(1.5, 0.2, 1);
-    sprite.userData = { canvas, ctx, texture };
-    return sprite;
-}
-
-function updateEnemyHPBar(sprite, current, max) {
-    const { canvas, ctx, texture } = sprite.userData;
-    ctx.fillStyle = '#444'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    const ratio = Math.max(0, current / max);
-    ctx.fillStyle = ratio > 0.5 ? '#00ff00' : '#ff0000';
-    ctx.fillRect(0, 0, ratio * canvas.width, canvas.height);
-    texture.needsUpdate = true;
-}
-
-function spawnMonster(isBoss = false) {
-    if (!isBoss && (enemiesSpawned >= totalEnemiesInStage || enemies.length > 8)) return;
-
-    const enGroup = new THREE.Group();
-    let size = isBoss ? 3 : 0.8;
-    let color = isBoss ? 0xff0044 : (Math.random() > 0.5 ? 0x55ff55 : 0xeeeeee);
-    const type = isBoss ? 'boss' : (Math.random() > 0.7 ? 'skeleton' : 'wolf');
+function spawnMonster() {
+    if (enemies.length > totalEnemiesInStage || enemiesDefeated >= totalEnemiesInStage) return;
+    const type = Math.random() > 0.7 ? 'skeleton' : Math.random() > 0.4 ? 'wolf' : 'slime';
+    const en = new THREE.Group();
+    let color = type === 'slime' ? 0x55ff55 : type === 'wolf' ? 0xaaaaaa : 0xeeeeee;
     
-    const bodyMesh = new THREE.Mesh(new THREE.BoxGeometry(size, size, size), new THREE.MeshPhongMaterial({ color }));
-    bodyMesh.position.y = size / 2; enGroup.add(bodyMesh);
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.8), new THREE.MeshPhongMaterial({ color }));
+    body.position.y = 0.4;
+    en.add(body);
     
-    // 적 눈 추가 (더 잘 보이게 z값 조정)
-    const eyeZ = size/2 + 0.05; // 몸통보다 약간 앞
     const eyeL = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, 0.1), new THREE.MeshBasicMaterial({ color: 0x000000 }));
-    eyeL.position.set(0.2, size*0.7, eyeZ);
-    eyeL.name = "eyeL"; enGroup.add(eyeL);
-    
+    eyeL.position.set(0.2, 0.6, 0.41);
+    eyeL.name = "eyeL";
+    en.add(eyeL);
     const eyeR = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, 0.1), new THREE.MeshBasicMaterial({ color: 0x000000 }));
-    eyeR.position.set(-0.2, size*0.7, eyeZ);
-    eyeR.name = "eyeR"; enGroup.add(eyeR);
+    eyeR.position.set(-0.2, 0.6, 0.41);
+    eyeR.name = "eyeR";
+    en.add(eyeR);
 
-    const hpBar = createEnemyHPBar();
-    hpBar.position.y = size + 0.8; enGroup.add(hpBar);
-
-    const shape = new CANNON.Box(new CANNON.Vec3(size/2, size/2, size/2));
-    const body = new CANNON.Body({ mass: isBoss ? 200 : 2, shape: shape, fixedRotation: true });
-    body.position.set(playerGroup.position.x + (Math.random() > 0.5 ? 15 : -15), 5, Math.random()*6 - 3);
-    world.addBody(body);
-
-    // 속도 2배 증가
-    let baseSpeed = 0.03;
-    if (type === 'wolf') baseSpeed = 0.06;
-    let speed = (baseSpeed + Math.random() * baseSpeed) * 2;
-
-    enGroup.userData = { 
-        hp: (isBoss ? 1500 : 40) * stage, maxHp: (isBoss ? 1500 : 40) * stage, 
-        body, hpBar, isBoss, hitFlash: 0, isFalling: false,
-        type: type, 
-        speed: speed 
+    const angle = Math.random() * Math.PI * 2;
+    en.position.set(
+        playerGroup.position.x + Math.cos(angle) * 8, 
+        0, 
+        playerGroup.position.z + Math.sin(angle) * 8
+    );
+    en.scale.set(0.01, 0.01, 0.01);
+    en.userData = { 
+        hp: 40 * stage, maxHp: 40 * stage, type, 
+        speed: 0.03 + Math.random()*0.03, attackCooldown: 0, 
+        hitFlash: 0, state: 'normal', spawnScale: 0.01 
     };
     
     playSound('spawn');
-    scene.add(enGroup);
-    enemies.push(enGroup);
-    if (!isBoss) enemiesSpawned++;
+    scene.add(en);
+    enemies.push(en);
 }
 
-// --- 메인 업데이트 루프 ---
 function update() {
     if (!gameActive) return;
 
-    world.step(1/60);
-    playerGroup.position.copy(PLAYER_DATA.body.position);
-
     if (!PLAYER_DATA.isFalling) {
-        if (stageTime > 0) {
-            stageTime -= 1/60;
-            if (Math.random() < 0.02) spawnMonster();
-        }
-        if (enemiesSpawned >= totalEnemiesInStage && enemies.length === 0) {
-            spawnMonster(true);
+        stageTime -= 1/60;
+        if (enemiesDefeated >= totalEnemiesInStage && enemies.length === 0) {
+            gameActive = false;
+            document.getElementById('shop-ui').style.display = 'flex';
         }
     }
 
-    // 캐릭터 속도 24로 증가
+    const totalMapWidth = WORLD_SIZE;
+    const totalMapHeight = WORLD_SIZE;
+    const mapBoundX = WORLD_SIZE / 2;
+    const mapBoundZ = WORLD_SIZE / 2;
+    
+    if (Math.abs(playerGroup.position.x) > mapBoundX || Math.abs(playerGroup.position.z) > mapBoundZ) {
+        PLAYER_DATA.isFalling = true;
+        document.getElementById('fall-alert').style.display = 'block';
+    } else {
+        document.getElementById('fall-alert').style.display = 'none';
+    }
+
+    if (PLAYER_DATA.isFalling) {
+        playerGroup.position.y -= 0.15;
+        if (playerGroup.position.y < -15) endGame("낙상");
+        return;
+    }
+
     let moveAllowed = !PLAYER_DATA.isBlocking && PLAYER_DATA.attackTimer < 15;
-    if (moveAllowed && !PLAYER_DATA.isFalling) {
-        const moveSpeed = 24; 
-        if (keys['ArrowRight']) { PLAYER_DATA.body.velocity.x = moveSpeed; PLAYER_DATA.direction = 1; playerGroup.rotation.y = 0; }
-        else if (keys['ArrowLeft']) { PLAYER_DATA.body.velocity.x = -moveSpeed; PLAYER_DATA.direction = -1; playerGroup.rotation.y = Math.PI; }
-        else PLAYER_DATA.body.velocity.x *= 0.9;
-
-        if (keys['ArrowUp']) PLAYER_DATA.body.velocity.z = -moveSpeed * 0.7;
-        else if (keys['ArrowDown']) PLAYER_DATA.body.velocity.z = moveSpeed * 0.7;
-        else PLAYER_DATA.body.velocity.z *= 0.9;
+    if (moveAllowed) {
+        const prevX = playerGroup.position.x;
+        const prevZ = playerGroup.position.z;
+        
+        if (keys['ArrowRight']) { playerGroup.position.x += PLAYER_DATA.speed; PLAYER_DATA.direction = 1; playerGroup.rotation.y = 0; }
+        if (keys['ArrowLeft']) { playerGroup.position.x -= PLAYER_DATA.speed; PLAYER_DATA.direction = -1; playerGroup.rotation.y = Math.PI; }
+        if (keys['ArrowUp']) playerGroup.position.z -= PLAYER_DATA.speed * 0.7;
+        if (keys['ArrowDown']) playerGroup.position.z += PLAYER_DATA.speed * 0.7;
+        
+        // Check tree collision
+        if (checkTreeCollision(playerGroup.position)) {
+            playerGroup.position.x = prevX;
+            playerGroup.position.z = prevZ;
+        }
     }
 
-    // 점프 (디버그 슬라이더 값 반영)
-    if (keys['Space'] && Math.abs(PLAYER_DATA.body.velocity.y) < 0.1 && !PLAYER_DATA.isFalling) {
-        PLAYER_DATA.body.velocity.y = debugSettings.jumpForce;
-        playSound('jump');
-    }
-
-    if (Math.abs(PLAYER_DATA.body.position.z) > WORLD_WIDTH_Z / 2 + 0.5) PLAYER_DATA.isFalling = true;
-    if (PLAYER_DATA.body.position.y < -10) endGame(PLAYER_DATA.isFalling ? "낙상" : "전투 불능");
-
+    // Camera fixed to player center
     camera.position.x = playerGroup.position.x;
+    camera.position.y = playerGroup.position.y + 5;
+    camera.position.z = playerGroup.position.z + 12;
+
+    if (keys['Space'] && !PLAYER_DATA.isJumping) { PLAYER_DATA.isJumping = true; PLAYER_DATA.jumpV = 0.25; playSound('jump'); }
+    if (PLAYER_DATA.isJumping) {
+        playerGroup.position.y += PLAYER_DATA.jumpV;
+        PLAYER_DATA.jumpV -= 0.012;
+        if (playerGroup.position.y <= 0) { playerGroup.position.y = 0; PLAYER_DATA.isJumping = false; }
+    }
 
     PLAYER_DATA.isBlocking = keys['KeyX'];
     if (keys['KeyZ'] && !PLAYER_DATA.isBlocking) {
         PLAYER_DATA.chargeTime++;
-        const cb = document.getElementById('charge-bar');
-        const cf = document.getElementById('charge-fill');
-        if (cb) cb.style.display = 'block';
-        if (cf) cf.style.width = Math.min(100, (PLAYER_DATA.chargeTime/60)*100) + '%';
-    } else if (PLAYER_DATA.chargeTime > 0) performAttack();
+        document.getElementById('charge-bar').style.display = 'block';
+        document.getElementById('charge-fill').style.width = Math.min(100, (PLAYER_DATA.chargeTime / 60) * 100) + '%';
+    } else if (PLAYER_DATA.chargeTime > 0) {
+        performAttack();
+    }
 
     if (PLAYER_DATA.attackTimer > 0) {
         PLAYER_DATA.attackTimer--;
         swordMesh.rotation.z = Math.sin(PLAYER_DATA.attackTimer * 0.5) * 2;
+    } else {
+        swordMesh.rotation.z = 0;
     }
 
-    // 몬스터 루프
-    const boss = enemies.find(e => e.userData.isBoss);
-
-    for (let i = enemies.length - 1; i >= 0; i--) {
-        const en = enemies[i];
-        const data = en.userData;
-        
-        en.position.copy(data.body.position);
-        en.quaternion.copy(data.body.quaternion);
-        updateEnemyHPBar(data.hpBar, data.hp, data.maxHp);
-
-        if (Math.abs(data.body.position.z) > WORLD_WIDTH_Z / 2 + 1) data.isFalling = true;
-        if (data.isFalling && data.body.position.y < -10) {
-            world.removeBody(data.body); scene.remove(en); enemies.splice(i, 1);
-            if (!data.isBoss) enemiesDefeated++;
-            continue;
+    enemies.forEach((en, i) => {
+        if (en.userData.spawnScale < 1) {
+            en.userData.spawnScale += 0.08;
+            let s = en.userData.spawnScale;
+            en.scale.set(s, s, s);
         }
 
-        if (boss && !data.isBoss) {
-            const dist = en.position.distanceTo(boss.position);
-            if (dist < 4) {
-                const push = data.body.position.vsub(boss.userData.body.position); 
-                push.normalize();
-                data.body.velocity.x += push.x * 5;
-                data.body.velocity.z += push.z * 5;
+        const dist = en.position.distanceTo(playerGroup.position);
+        const eyeL = en.getObjectByName("eyeL");
+        const eyeR = en.getObjectByName("eyeR");
+
+        if (en.userData.hitFlash > 0) {
+            en.userData.state = 'hurt';
+            en.userData.hitFlash--;
+            if (eyeL) eyeL.scale.set(1.5, 0.2, 1);
+            if (eyeR) eyeR.scale.set(1.5, 0.2, 1);
+            en.scale.set(1.2, 0.7, 1.2); 
+        } else if (en.userData.attackCooldown > 60) {
+            en.userData.state = 'angry';
+            if (eyeL) eyeL.material.color.set(0xff0000);
+            if (eyeR) eyeR.material.color.set(0xff0000);
+            en.scale.set(1.1, 1.1, 1.1);
+        } else {
+            en.userData.state = 'normal';
+            if (eyeL) { eyeL.scale.set(1, 1, 1); eyeL.material.color.set(0x000000); }
+            if (eyeR) { eyeR.scale.set(1, 1, 1); eyeR.material.color.set(0x000000); }
+            if (en.userData.spawnScale >= 1) en.scale.set(1, 1, 1);
+        }
+
+        if (dist > 1.2 && en.userData.state !== 'hurt') {
+            const dir = new THREE.Vector3().subVectors(playerGroup.position, en.position).normalize();
+            en.position.x += dir.x * en.userData.speed;
+            en.position.z += dir.z * en.userData.speed;
+        } else if (en.userData.attackCooldown <= 0 && en.userData.state !== 'hurt') {
+            en.userData.attackCooldown = 100;
+            if (PLAYER_DATA.shieldTimer <= 0 && !PLAYER_DATA.isBlocking) {
+                PLAYER_DATA.hp -= 12;
+                shakeCamera();
+                playSound('hit');
             }
         }
+        if (en.userData.attackCooldown > 0) en.userData.attackCooldown--;
 
-        if (!data.isFalling && data.hitFlash <= 0) {
-            const dist = en.position.distanceTo(playerGroup.position);
-            
-            // 몬스터 AI: 디버그 슬라이더 값(enemySpeedMult) 반영
-            let effectiveSpeed = data.speed * 100 * debugSettings.enemySpeedMult;
-
-            if (data.type === 'skeleton') {
-                 if (dist > 7) {
-                    const dir = new THREE.Vector3().subVectors(playerGroup.position, en.position).normalize();
-                    data.body.velocity.x = dir.x * effectiveSpeed;
-                    data.body.velocity.z = dir.z * effectiveSpeed;
-                } else if (dist < 5) {
-                    const dir = new THREE.Vector3().subVectors(en.position, playerGroup.position).normalize();
-                    data.body.velocity.x = dir.x * effectiveSpeed;
-                    data.body.velocity.z = dir.z * effectiveSpeed;
-                }
-            } else {
-                if (dist > (data.isBoss ? 4 : 1.5)) {
-                    const dir = new THREE.Vector3().subVectors(playerGroup.position, en.position).normalize();
-                    if (data.isBoss) effectiveSpeed *= 0.5;
-                    data.body.velocity.x = dir.x * effectiveSpeed;
-                    data.body.velocity.z = dir.z * effectiveSpeed;
-                } else {
-                    if (PLAYER_DATA.shieldTimer <= 0 && !PLAYER_DATA.isBlocking) {
-                        PLAYER_DATA.hp -= (data.isBoss ? 0.6 : 0.2);
-                        if (Math.random() < 0.01) { shakeCamera(); playSound('hit'); }
-                    }
-                }
-            }
+        if (en.userData.hp <= 0) {
+            dropItem(en.position);
+            PLAYER_DATA.xp += 1;
+            enemiesDefeated++;
+            scene.remove(en);
+            enemies.splice(i, 1);
+            checkLevelUp();
         }
-        if (data.hitFlash > 0) data.hitFlash--;
+    });
 
-        if (data.hp <= 0) {
-            world.removeBody(data.body); scene.remove(en); enemies.splice(i, 1);
-            if (data.isBoss) { 
-                gameActive = false; 
-                document.getElementById('shop-ui').style.display = 'flex'; 
-            } else { 
-                enemiesDefeated++; 
-                money += 25; 
-                PLAYER_DATA.xp += 1;
-                checkLevelUp(); 
-            }
-        }
-    }
-
-    for (let i = items.length - 1; i >= 0; i--) {
-        const it = items[i];
+    items.forEach((it, i) => {
         if (it.position.distanceTo(playerGroup.position) < 1) {
             if (it.userData.type === 'potion') PLAYER_DATA.hp = Math.min(PLAYER_DATA.maxHp, PLAYER_DATA.hp + 30);
             if (it.userData.type === 'coin') money += 50;
-            scene.remove(it); items.splice(i, 1); playSound('levelup');
+            scene.remove(it);
+            items.splice(i, 1);
+            playSound('levelup');
         }
-    }
+    });
 
-    updateUI();
-}
+    if (Math.random() < 0.01) spawnMonster();
 
-function updateUI() {
-    const hpFill = document.getElementById('hp-fill');
-    if (hpFill) hpFill.style.width = Math.max(0, PLAYER_DATA.hp) + '%';
+    document.getElementById('hp-fill').style.width = (PLAYER_DATA.hp / PLAYER_DATA.maxHp) * 100 + '%';
     document.getElementById('money-val').innerText = money;
     document.getElementById('lv-val').innerText = PLAYER_DATA.lv;
     document.getElementById('xp-val').innerText = PLAYER_DATA.xp;
     document.getElementById('next-xp-val').innerText = PLAYER_DATA.nextXp;
-    
-    const timer = document.getElementById('timer');
-    if (timer) {
-        let m = Math.floor(Math.max(0, stageTime)/60);
-        let s = Math.floor(Math.max(0, stageTime)%60);
-        let rem = Math.max(0, totalEnemiesInStage - enemiesSpawned + enemies.length);
-        if (enemiesSpawned >= totalEnemiesInStage) rem = enemies.length;
-        timer.innerText = `Stage ${stage} - ${m}:${s.toString().padStart(2,'0')} | 남은 적: ${rem}`;
-    }
+    let m = Math.floor(stageTime/60), s = Math.floor(stageTime%60);
+    document.getElementById('timer').innerText = `Stage ${stage} - ${m}:${s.toString().padStart(2,'0')}`;
+
+    if (PLAYER_DATA.hp <= 0) endGame("전투 불능");
+    if (PLAYER_DATA.shieldTimer > 0) { PLAYER_DATA.shieldTimer--; shieldMesh.visible = true; }
+    else { shieldMesh.visible = false; }
 }
 
 function performAttack() {
-    // 공격 속도 슬라이더 반영 (높을수록 쿨타임 감소)
-    PLAYER_DATA.isAttacking = true; 
-    PLAYER_DATA.attackTimer = 30 / debugSettings.attackSpeedMult; 
+    PLAYER_DATA.isAttacking = true;
+    PLAYER_DATA.attackTimer = 30;
     playSound('attack');
     
-    let range = 2.5; let pushForce = 20; let dmg = 35 * PLAYER_DATA.lv;
+    let range = 2.2 + (PLAYER_DATA.weapon !== 'sword' ? 1.5 : 0);
+    let dmg = 25 * PLAYER_DATA.lv;
+    let knockback = 2.0;
 
-    if (PLAYER_DATA.chargeTime >= 60) { range *= 2; pushForce *= 3; dmg *= 3; shakeCamera(); createLightning(); }
+    if (PLAYER_DATA.chargeTime >= 60) { 
+        range *= 2; dmg *= 3; knockback = 5.0; 
+        createLightning(); 
+        shakeCamera();
+    }
 
     enemies.forEach(en => {
         if (en.position.distanceTo(playerGroup.position) < range) {
             en.userData.hp -= dmg;
-            en.userData.hitFlash = 20;
-            const dir = en.userData.body.position.vsub(PLAYER_DATA.body.position);
-            dir.normalize();
-            en.userData.body.velocity.set(dir.x * pushForce, 10, dir.z * pushForce); 
+            en.userData.hitFlash = 30;
+            const pushDir = new THREE.Vector3().subVectors(en.position, playerGroup.position).normalize();
+            en.position.x += pushDir.x * knockback;
+            en.position.z += pushDir.z * knockback * 0.5;
             playSound('hit');
         }
     });
-    PLAYER_DATA.chargeTime = 0; 
-    const cb = document.getElementById('charge-bar');
-    if (cb) cb.style.display = 'none';
+
+    PLAYER_DATA.chargeTime = 0;
+    document.getElementById('charge-bar').style.display = 'none';
 }
 
 function createLightning() {
-    const geo = new THREE.CylinderGeometry(0.2, 1, 20, 8);
+    const geo = new THREE.CylinderGeometry(0.15, 0.8, 15, 8);
     const mat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
     const l = new THREE.Mesh(geo, mat);
-    l.position.set(playerGroup.position.x, 10, playerGroup.position.z);
-    scene.add(l); setTimeout(() => scene.remove(l), 150);
+    l.position.set(playerGroup.position.x, 7.5, playerGroup.position.z);
+    scene.add(l);
+    setTimeout(() => scene.remove(l), 150);
+}
+
+function dropItem(pos) {
+    const type = Math.random() > 0.5 ? 'coin' : 'potion';
+    const geo = new THREE.BoxGeometry(0.4, 0.4, 0.4);
+    const mat = new THREE.MeshPhongMaterial({ color: type === 'coin' ? 0xffd700 : 0xff0000 });
+    const it = new THREE.Mesh(geo, mat);
+    it.position.copy(pos);
+    it.position.y = 0.2;
+    it.userData = { type };
+    scene.add(it);
+    items.push(it);
+}
+
+function checkTreeCollision(playerPos) {
+    const playerRadius = 0.5;
+    for (let tree of trees) {
+        const dist = Math.sqrt(
+            Math.pow(playerPos.x - tree.position.x, 2) + 
+            Math.pow(playerPos.z - tree.position.z, 2)
+        );
+        if (dist < playerRadius + tree.userData.radius) {
+            return true;
+        }
+    }
+    return false;
 }
 
 function checkLevelUp() {
     if (PLAYER_DATA.xp >= PLAYER_DATA.nextXp) {
-        PLAYER_DATA.lv++; 
-        PLAYER_DATA.xp = 0; 
+        PLAYER_DATA.lv++;
+        PLAYER_DATA.xp = 0;
         PLAYER_DATA.nextXp *= 2;
-        PLAYER_DATA.hp = PLAYER_DATA.maxHp; PLAYER_DATA.shieldTimer = 300;
+        PLAYER_DATA.hp = PLAYER_DATA.maxHp;
+        PLAYER_DATA.shieldTimer = 300;
         playSound('levelup');
+        createLightning();
+        
+        if (PLAYER_DATA.lv === 2) {
+            const hornL = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.4, 0.1), new THREE.MeshPhongMaterial({ color: 0x888888 }));
+            hornL.position.set(0.3, 1.7, 0);
+            playerGroup.add(hornL);
+            const hornR = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.4, 0.1), new THREE.MeshPhongMaterial({ color: 0x888888 }));
+            hornR.position.set(-0.3, 1.7, 0);
+            playerGroup.add(hornR);
+        }
+        if (PLAYER_DATA.lv >= 3) swordMesh.scale.y = 1.8;
     }
 }
 
 function buyWeapon(type, cost) {
-    if (money >= cost) { 
-        money -= cost; PLAYER_DATA.weapon = type; 
-        if (type === 'axe') swordMesh.scale.set(4, 0.5, 4);
-        alert("장비 업그레이드 완료!"); 
+    if (money >= cost) {
+        money -= cost;
+        PLAYER_DATA.weapon = type;
+        if (type === 'axe') swordMesh.scale.set(4, 1, 4);
+        if (type === 'legend') swordMesh.material.color.set(0x00ffff);
+        alert("새로운 무기를 장착했습니다!");
     } else alert("돈이 부족합니다!");
 }
 
 function nextStage() {
-    stage++; stageTime = 60; 
-    totalEnemiesInStage *= 2; 
-    enemiesSpawned = 0; enemiesDefeated = 0;
-    const shopUi = document.getElementById('shop-ui');
-    if (shopUi) shopUi.style.display = 'none';
+    stage++;
+    stageTime = 120;
+    totalEnemiesInStage *= 2;
+    enemiesDefeated = 0;
+    document.getElementById('shop-ui').style.display = 'none';
+    gameActive = true;
+}
+
+function spawnBoss() {
+    gameActive = false;
+    const boss = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(4, 4, 4), new THREE.MeshPhongMaterial({ color: 0xff0000 }));
+    body.position.y = 2;
+    boss.add(body);
+    
+    const eyeL = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.2), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+    eyeL.position.set(1, 3, 2.1); eyeL.name = "eyeL"; boss.add(eyeL);
+    const eyeR = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.2), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+    eyeR.position.set(-1, 3, 2.1); eyeR.name = "eyeR"; boss.add(eyeR);
+
+    boss.position.set(playerGroup.position.x + 15, 0, 0);
+    boss.userData = { 
+        hp: 1500 * stage, maxHp: 1500 * stage, isBoss: true, 
+        speed: 0.02, attackCooldown: 0, hitFlash: 0, state: 'normal', spawnScale: 1 
+    };
+    scene.add(boss);
+    enemies.push(boss);
     gameActive = true;
 }
 
@@ -512,27 +715,32 @@ function shakeCamera() {
     const originalY = camera.position.y;
     let count = 0;
     const interval = setInterval(() => {
-        camera.position.y = originalY + (Math.random()-0.5)*0.5;
-        if (++count > 10) { clearInterval(interval); camera.position.y = originalY; }
+        camera.position.y = originalY + (Math.random()-0.5)*0.6;
+        if (++count > 12) { clearInterval(interval); camera.position.y = originalY; }
     }, 30);
 }
 
 function endGame(reason) {
     gameActive = false;
-    const ft = document.getElementById('fail-title');
-    const fm = document.getElementById('fail-msg');
-    const go = document.getElementById('game-over');
-    if (ft) ft.innerText = reason === "낙상" ? "추락 주의!" : "GAME OVER";
-    if (go) go.style.display = 'flex';
+    document.getElementById('fail-title').innerText = reason === "낙상" ? "추락 주의!" : "GAME OVER";
+    document.getElementById('fail-msg').innerText = reason === "낙상" ? "월드 밖으로 떨어졌습니다." : "체력이 다 되었습니다.";
+    document.getElementById('game-over').style.display = 'flex';
 }
 
 function animate() {
-    if (!gameActive) { if (renderer) renderer.render(scene, camera); requestAnimationFrame(animate); return; }
+    if (!gameActive) { 
+        if (renderer) renderer.render(scene, camera); 
+        requestAnimationFrame(animate); 
+        return; 
+    }
     update();
     renderer.render(scene, camera);
     requestAnimationFrame(animate);
 }
 
-window.initGame = initGame; 
-window.buyWeapon = buyWeapon; 
+// Global function binding
+window.initGame = initGame;
+window.buyWeapon = buyWeapon;
 window.nextStage = nextStage;
+
+console.log("✅ Global functions bound", { initGame: typeof window.initGame, buyWeapon: typeof window.buyWeapon, nextStage: typeof window.nextStage });

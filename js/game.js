@@ -135,11 +135,15 @@ const PLAYER_DATA = {
     x: 0, y: 0, z: 0,
     hp: 100, maxHp: 100, lv: 1, xp: 0, nextXp: 5,
     speed: 0.15, jumpV: 0, isJumping: false,
-    jumpMaxV: 0.25, // Initial jump velocity
+    jumpMaxV: 0.25,
     isAttacking: false, attackTimer: 0, chargeTime: 0,
     weapon: 'sword', direction: 1, shieldTimer: 0,
     isFalling: false,
-    swordScaleY: 1.2 // Default sword length
+    swordScaleY: 1.2,
+    // 스태미나 시스템
+    stamina: 5, maxStamina: 5,
+    staminaExhausted: false,  // 5칼 전부 소진 시 불능 상태
+    staminaRegenTimer: 0      // 1초(60프레임)모닙
 };
 
 const WORLD_SIZE = 180; // Total world size 180×180
@@ -218,19 +222,19 @@ function createPlayer() {
     hair.position.y = 0.25;
     headGroup.add(hair);
 
-    // Eyes (Dual-sided so face is always visible when turning)
+    // Eyes (front only)
     const eyeMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
-    // Front Eyes
+    // 앞쪽 눈만 추가
     const eyeFL = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), eyeMat);
     eyeFL.position.set(0.15, 0.1, 0.3);
     const eyeFR = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), eyeMat);
     eyeFR.position.set(-0.15, 0.1, 0.3);
-    // Back Eyes (Visible when facing left)
-    const eyeBL = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), eyeMat);
-    eyeBL.position.set(0.15, 0.1, -0.3);
-    const eyeBR = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), eyeMat);
-    eyeBR.position.set(-0.15, 0.1, -0.3);
-    headGroup.add(eyeFL, eyeFR, eyeBL, eyeBR);
+    headGroup.add(eyeFL, eyeFR);
+
+    // 뒷머리 블록 (뒤에서 봤을 때 머리카락이 더 두툼하게 보이도록)
+    const backHair = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.45, 0.15), new THREE.MeshPhongMaterial({ color: 0x4a2c2a }));
+    backHair.position.set(0, 0.05, -0.35);
+    headGroup.add(backHair);
 
     headGroup.position.y = 1.5;
     playerGroup.add(headGroup);
@@ -268,8 +272,9 @@ function createPlayer() {
     blade.castShadow = true;
     swordMesh.add(handle, guard, blade);
 
-    swordMesh.position.set(0.6, 1.1, 0.1);
-    swordMesh.rotation.x = -Math.PI * 0.2; // Default slight tilt
+    swordMesh.position.set(0.5, 1.0, 0);
+    // 기본 자세: 칼날 위로 (정면에서 보면 | 모양)
+    swordMesh.rotation.set(0, 0, 0);
     PLAYER_DATA.swordScaleY = 1.0;
     playerGroup.add(swordMesh);
 
@@ -667,15 +672,26 @@ function spawnMonster() {
 
     const en = createMonsterMesh(type);
 
-    const angle = Math.random() * Math.PI * 2;
-    const spawnX = playerGroup.position.x + Math.cos(angle) * 12;
-    const spawnZ = playerGroup.position.z + Math.sin(angle) * 12;
-
-    let normalChance = Math.max(0.1, GAME_SETTINGS.MONSTER.NORMAL_CHANCE - (stage - 1) * GAME_SETTINGS.MONSTER.CHANCE_DECAY);
-    const sizeFactor = Math.random() < normalChance ? 1.0 : (1.0 + Math.random() * (GAME_SETTINGS.MONSTER.MAX_SIZE - 1.0));
+    // 유효한 땅 위에 스폰될 때까지 최대 30번 재시도
+    let spawnX, spawnZ;
+    let spawnFound = false;
+    for (let attempt = 0; attempt < 30; attempt++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 8 + Math.random() * 8;
+        spawnX = playerGroup.position.x + Math.cos(angle) * dist;
+        spawnZ = playerGroup.position.z + Math.sin(angle) * dist;
+        if (checkGroundCollision({ x: spawnX, z: spawnZ, y: 0 })) {
+            spawnFound = true;
+            break;
+        }
+    }
+    if (!spawnFound) return; // 유효 위치 못 찾으면 스폰 취소
 
     en.position.set(spawnX, 0, spawnZ);
     en.scale.set(0.01, 0.01, 0.01);
+
+    let normalChance = Math.max(0.1, GAME_SETTINGS.MONSTER.NORMAL_CHANCE - (stage - 1) * GAME_SETTINGS.MONSTER.CHANCE_DECAY);
+    const sizeFactor = Math.random() < normalChance ? 1.0 : (1.0 + Math.random() * (GAME_SETTINGS.MONSTER.MAX_SIZE - 1.0));
 
     // Type specific stat modifiers
     let hpMod = 1, speedMod = 1, dmgMod = 1;
@@ -691,7 +707,8 @@ function spawnMonster() {
         hitFlash: 0, state: 'normal',
         spawnScale: 0.01, targetScale: sizeFactor,
         sizeFactor: sizeFactor,
-        damage: GAME_SETTINGS.MONSTER.BASE_DAMAGE * sizeFactor * dmgMod
+        damage: GAME_SETTINGS.MONSTER.BASE_DAMAGE * sizeFactor * dmgMod,
+        lastValidX: spawnX, lastValidZ: spawnZ  // 마지막 유효 위치 저장
     };
 
     playSound('spawn');
@@ -723,10 +740,11 @@ function update() {
     const mapBoundZ = WORLD_SIZE / 2;
 
     // Check if player is on valid ground
-    if (!checkGroundCollision(playerGroup.position)) {
+    // 점프 중에는 공중이므로 낙하 판정을 하지 않음 — 착지 후에만 체크
+    if (!PLAYER_DATA.isJumping && !checkGroundCollision(playerGroup.position)) {
         PLAYER_DATA.isFalling = true;
         document.getElementById('fall-alert').style.display = 'block';
-    } else {
+    } else if (!PLAYER_DATA.isJumping) {
         PLAYER_DATA.isFalling = false;
         document.getElementById('fall-alert').style.display = 'none';
     }
@@ -742,10 +760,25 @@ function update() {
         const prevX = playerGroup.position.x;
         const prevZ = playerGroup.position.z;
 
-        if (keys['ArrowRight']) { playerGroup.position.x += PLAYER_DATA.speed; PLAYER_DATA.direction = 1; playerGroup.rotation.y = 0; }
-        if (keys['ArrowLeft']) { playerGroup.position.x -= PLAYER_DATA.speed; PLAYER_DATA.direction = -1; playerGroup.rotation.y = Math.PI; }
-        if (keys['ArrowUp']) playerGroup.position.z -= PLAYER_DATA.speed * 0.7;
-        if (keys['ArrowDown']) playerGroup.position.z += PLAYER_DATA.speed * 0.7;
+        let dx = 0;
+        let dz = 0;
+        if (keys['ArrowRight']) dx += 1;
+        if (keys['ArrowLeft']) dx -= 1;
+        if (keys['ArrowUp']) dz -= 1;
+        if (keys['ArrowDown']) dz += 1;
+
+        if (dx !== 0 || dz !== 0) {
+            const length = Math.sqrt(dx * dx + dz * dz);
+            dx /= length;
+            dz /= length;
+
+            playerGroup.position.x += dx * PLAYER_DATA.speed;
+            playerGroup.position.z += dz * PLAYER_DATA.speed * 0.7;
+
+            playerGroup.rotation.y = Math.atan2(dx, dz);
+            PLAYER_DATA.dirX = dx;
+            PLAYER_DATA.dirZ = dz;
+        }
 
         // Check tree collision
         if (checkTreeCollision(playerGroup.position)) {
@@ -761,26 +794,38 @@ function update() {
 
     camera.position.z = playerGroup.position.z + 12;
 
-    // Use upgraded jump velocity
+    // 점프 — 이동 방향으로 슝~ 날아가기
     if (keys['Space'] && !PLAYER_DATA.isJumping) {
         PLAYER_DATA.isJumping = true;
         PLAYER_DATA.jumpV = PLAYER_DATA.jumpMaxV;
+        // 현재 이동 방향 저장 (공중에서 계속 그 방향으로 날아감)
+        PLAYER_DATA.jumpDirX = (PLAYER_DATA.dirX || 0) * PLAYER_DATA.speed * 1.5;
+        PLAYER_DATA.jumpDirZ = (PLAYER_DATA.dirZ || 0) * PLAYER_DATA.speed * 0.7 * 1.5;
         playSound('jump');
     }
     if (PLAYER_DATA.isJumping) {
         playerGroup.position.y += PLAYER_DATA.jumpV;
-        // Gravity slightly reduced for higher jumps logic, or just standard
+        playerGroup.position.x += PLAYER_DATA.jumpDirX || 0;
+        playerGroup.position.z += PLAYER_DATA.jumpDirZ || 0;
         PLAYER_DATA.jumpV -= 0.012;
-        if (playerGroup.position.y <= 0) { playerGroup.position.y = 0; PLAYER_DATA.isJumping = false; }
+        if (playerGroup.position.y <= 0) {
+            playerGroup.position.y = 0;
+            PLAYER_DATA.isJumping = false;
+            PLAYER_DATA.jumpDirX = 0;
+            PLAYER_DATA.jumpDirZ = 0;
+        }
     }
 
     PLAYER_DATA.isBlocking = keys['KeyX'];
-    if (keys['KeyZ'] && !PLAYER_DATA.isBlocking) {
-        PLAYER_DATA.chargeTime++;
-        document.getElementById('charge-bar').style.display = 'block';
-        document.getElementById('charge-fill').style.width = Math.min(100, (PLAYER_DATA.chargeTime / 60) * 100) + '%';
-    } else if (PLAYER_DATA.chargeTime > 0) {
-        performAttack();
+    // 공격 중(attackTimer > 0)엔 차지도, 재공격도 불가 — 한 번 휘두르고 나서야 다시 공격 가능
+    if (PLAYER_DATA.attackTimer <= 0) {
+        if (keys['KeyZ'] && !PLAYER_DATA.isBlocking) {
+            PLAYER_DATA.chargeTime++;
+            document.getElementById('charge-bar').style.display = 'block';
+            document.getElementById('charge-fill').style.width = Math.min(100, (PLAYER_DATA.chargeTime / 60) * 100) + '%';
+        } else if (PLAYER_DATA.chargeTime > 0) {
+            performAttack();
+        }
     }
 
     // Limb Animations
@@ -803,25 +848,29 @@ function update() {
 
     if (PLAYER_DATA.attackTimer > 0) {
         PLAYER_DATA.attackTimer--;
-        const progress = (30 - PLAYER_DATA.attackTimer) / 30; // 0 to 1
+        const progress = (30 - PLAYER_DATA.attackTimer) / 30; // 0~1
 
-        // 캐릭터 바깥쪽으로 휘두르도록 수정 (안어울리게 몸 안으로 들어오는 것 방지)
-        // 0.1PI (준비) -> -0.9PI (바깥쪽 아래로 휘두르기)
-        swordMesh.rotation.z = 0.1 * Math.PI - progress * Math.PI * 1.0;
+        // 항상 월드 X축 기준으로 휘두르기
+        // playerGroup이 어느 방향이든 카메라에서 보면 | → / → -- → \ 로 보임
+        const angle = progress * Math.PI * 0.9;
+        const worldX = new THREE.Vector3(1, 0, 0);
+        const swingQuat = new THREE.Quaternion().setFromAxisAngle(worldX, angle);
+        // playerGroup 회전의 역을 곱해 월드 회전을 로컬로 변환
+        const parentInv = playerGroup.quaternion.clone().invert();
+        swordMesh.quaternion.copy(parentInv.premultiply(swingQuat));
 
-        // 휘두를 때 팔(armL)도 바깥쪽(음수 Z회전)으로 들리도록 설정
+        // 팔도 함께
         const limbs = playerGroup.userData.limbs;
         if (limbs) {
-            limbs.armL.rotation.z = -progress * Math.PI * 0.4;
-            limbs.armL.rotation.x = -0.3 + Math.sin(progress * Math.PI) * 0.6;
+            limbs.armL.rotation.x = progress * Math.PI * 0.5;
+            limbs.armL.rotation.z = 0;
         }
     } else {
-        swordMesh.rotation.z = -0.1 * Math.PI; // 기본 비스듬한 자세
-        swordMesh.rotation.x = -Math.PI * 0.2;
+        // 기본 자세: 칼날 위로 (| 모양)
+        swordMesh.quaternion.identity();
         const limbs = playerGroup.userData.limbs;
         if (limbs) {
             limbs.armL.rotation.z = 0;
-            // 이동 중이 아닐 때는 X 회전도 리셋 (이동 애니메이션은 위에서 처리됨)
             if (!(keys['ArrowRight'] || keys['ArrowLeft'] || keys['ArrowUp'] || keys['ArrowDown'])) {
                 limbs.armL.rotation.x = 0;
             }
@@ -950,17 +999,19 @@ function update() {
         } else if (dist <= stopDist && en.userData.attackCooldown <= 0 && en.userData.state === 'normal') {
             // 트리거: 공격 시작
             en.userData.attackTimer = 40;
-            en.userData.attackCooldown = 80; // 다음 공격까지의 대기 시간
+            en.userData.attackCooldown = 30; // 다음 공격까지의 대기 시간 (원래 80, 더 자주 공격하게 줄임)
         }
 
-        // Check if enemy is on valid ground
-        if (!checkGroundCollision(en.position)) {
-            en.position.y -= 0.2;
-            if (en.position.y < -10) {
-                // Remove enemy if it falls too far
-                scene.remove(en);
-                enemies.splice(i, 1);
-            }
+        // 땅 위에 있으면 유효 위치 갱신, 땅 밖이면 마지막 유효 위치로 복원
+        if (checkGroundCollision(en.position)) {
+            en.userData.lastValidX = en.position.x;
+            en.userData.lastValidZ = en.position.z;
+            en.position.y = 0;
+        } else {
+            // 낙하 대신 마지막 유효 위치로 되돌아옴
+            en.position.x = en.userData.lastValidX || en.position.x;
+            en.position.z = en.userData.lastValidZ || en.position.z;
+            en.position.y = 0;
         }
 
         // 보스 체력바 업데이트
@@ -1022,6 +1073,30 @@ function update() {
     if (PLAYER_DATA.shieldTimer > 0) { PLAYER_DATA.shieldTimer--; shieldMesh.visible = true; }
     else { shieldMesh.visible = false; }
 
+    // 스태미나 자동 회복: 1초마다 1칸
+    if (PLAYER_DATA.stamina < PLAYER_DATA.maxStamina) {
+        PLAYER_DATA.staminaRegenTimer++;
+        if (PLAYER_DATA.staminaRegenTimer >= 60) {
+            PLAYER_DATA.staminaRegenTimer = 0;
+            PLAYER_DATA.stamina++;
+            // 만충 시 exhausted 해제
+            if (PLAYER_DATA.staminaExhausted && PLAYER_DATA.stamina >= PLAYER_DATA.maxStamina) {
+                PLAYER_DATA.staminaExhausted = false;
+            }
+        }
+    } else {
+        PLAYER_DATA.staminaRegenTimer = 0;
+    }
+
+    // 스태미나 UI 업데이트 (회복 중이면 까낙기)
+    for (let i = 0; i < PLAYER_DATA.maxStamina; i++) {
+        const cell = document.getElementById('st' + i);
+        if (cell) {
+            cell.classList.toggle('empty', i >= PLAYER_DATA.stamina);
+            cell.classList.toggle('recharging', PLAYER_DATA.staminaExhausted);
+        }
+    }
+
     // Tree Animation
     trees.forEach(tree => {
         if (tree.userData.shakeTimer > 0) {
@@ -1044,8 +1119,23 @@ function update() {
 }
 
 function performAttack() {
+    // 스태미나 체크: 0이거나 exhausted 상태면 공격 불가
+    if (PLAYER_DATA.stamina <= 0 || PLAYER_DATA.staminaExhausted) {
+        PLAYER_DATA.chargeTime = 0;
+        document.getElementById('charge-bar').style.display = 'none';
+        return;
+    }
+
     PLAYER_DATA.isAttacking = true;
     PLAYER_DATA.attackTimer = 30;
+    PLAYER_DATA.stamina--;  // 스태미나 1칸 소모
+
+    // 5칸 평다 전부 소진 시 exhausted 상태
+    if (PLAYER_DATA.stamina <= 0) {
+        PLAYER_DATA.staminaExhausted = true;
+        PLAYER_DATA.staminaRegenTimer = 0; // 즐시 회복 시작
+    }
+
     playSound('attack');
 
     // 칼날의 현재 스케일을 고려한 범위 계산
@@ -1060,7 +1150,28 @@ function performAttack() {
     }
 
     enemies.forEach(en => {
+        let isHit = false;
         if (en.position.distanceTo(playerGroup.position) < range) {
+            let dx = en.position.x - playerGroup.position.x;
+            let dz = en.position.z - playerGroup.position.z;
+            let dist = Math.sqrt(dx * dx + dz * dz);
+            if (dist > 0.01) {
+                dx /= dist;
+                dz /= dist;
+            } else {
+                dx = 1; dz = 0;
+            }
+
+            let pDirX = PLAYER_DATA.dirX !== undefined ? PLAYER_DATA.dirX : 1;
+            let pDirZ = PLAYER_DATA.dirZ !== undefined ? PLAYER_DATA.dirZ : 0;
+
+            let dot = dx * pDirX + dz * pDirZ;
+            if (dot > -0.2) {
+                isHit = true;
+            }
+        }
+
+        if (isHit) {
             en.userData.hp -= dmg;
             en.userData.hitFlash = 30;
             const pushDir = new THREE.Vector3().subVectors(en.position, playerGroup.position).normalize();
@@ -1075,7 +1186,28 @@ function performAttack() {
 
     // Check Tree Hits
     trees.forEach((tree, index) => {
+        let isHit = false;
         if (tree.position.distanceTo(playerGroup.position) < range * 0.8) {
+            let dx = tree.position.x - playerGroup.position.x;
+            let dz = tree.position.z - playerGroup.position.z;
+            let dist = Math.sqrt(dx * dx + dz * dz);
+            if (dist > 0.01) {
+                dx /= dist;
+                dz /= dist;
+            } else {
+                dx = 1; dz = 0;
+            }
+
+            let pDirX = PLAYER_DATA.dirX !== undefined ? PLAYER_DATA.dirX : 1;
+            let pDirZ = PLAYER_DATA.dirZ !== undefined ? PLAYER_DATA.dirZ : 0;
+
+            let dot = dx * pDirX + dz * pDirZ;
+            if (dot > -0.2) {
+                isHit = true;
+            }
+        }
+
+        if (isHit) {
             playSound('tree_hit');
             tree.userData.shakeTimer = 10;
             tree.userData.hp--;
